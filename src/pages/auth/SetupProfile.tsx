@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { db } from '@/lib/firebase';
 import { userService } from '@/services/userService';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -10,15 +10,63 @@ export function SetupProfile() {
     const { user, setProfile } = useAuthStore();
     const navigate = useNavigate();
     const [loading, setLoading] = useState(false);
+    const [checking, setChecking] = useState(true);
+
+    useEffect(() => {
+        const checkExistingProfile = async () => {
+            if (!user) return;
+            try {
+                const userDocSnap = await getDoc(doc(db, 'users', user.uid));
+                if (userDocSnap.exists()) {
+                    console.log('SetupProfile (Auto): User document already exists. Redirecting...');
+                    setProfile({
+                        uid: user.uid,
+                        ...userDocSnap.data()
+                    } as any);
+                    navigate('/', { replace: true });
+                }
+            } catch (err) {
+                console.error("Auto-check failed", err);
+            } finally {
+                setChecking(false);
+            }
+        };
+        checkExistingProfile();
+    }, [user, navigate, setProfile]);
 
     if (!user) {
         navigate('/login');
         return null;
     }
 
+    if (checking) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+            </div>
+        );
+    }
+
     const handleSetup = async () => {
         setLoading(true);
         try {
+            // 0. Safety Check: Does profile already exist?
+            try {
+                const userDocSnap = await getDoc(doc(db, 'users', user.uid));
+                if (userDocSnap.exists()) {
+                    console.log('SetupProfile: User document already exists. Redirecting...');
+                    setProfile({
+                        uid: user.uid,
+                        ...userDocSnap.data()
+                    } as any);
+                    navigate('/');
+                    return;
+                }
+            } catch (err) {
+                console.error("Error checking existing profile:", err);
+                // Continue to try invite flow just in case
+            }
+
             // DEBUG: Log what email we're using to fetch
             const normalizedEmail = (user.email || '').trim().toLowerCase();
             console.log('=== DEBUG INVITE LOOKUP ===');
@@ -62,8 +110,6 @@ export function SetupProfile() {
                 console.log('Step 2: SUCCESS - Invite deleted');
             } catch (e) {
                 console.error('Step 2: FAILED - Could not delete invite', e);
-                // Don't throw - user is already created, we can continue
-                // The invite will remain but user is set up
             }
 
             setProfile({

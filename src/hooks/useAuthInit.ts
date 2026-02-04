@@ -25,7 +25,11 @@ export function useAuthInit() {
                     setProfile(null);
                 }
             } catch (err) {
-                console.error("Auth init error", err);
+                console.error("Auth init error details:", err);
+                if (err instanceof Error) {
+                    console.error("Error message:", err.message);
+                    console.error("Error stack:", err.stack);
+                }
                 setProfile(null);
             } finally {
                 setLoading(false);

@@ -43,7 +43,12 @@ service cloud.firestore {
       allow create: if isAuthenticated() && request.auth.uid == userId;
       
       // UPDATE: Only admin can update profiles
-      allow update: if isAdmin();
+      // UPDATE: Admin (full), or Owner (restricted - cannot change role)
+      allow update: if isAdmin() || (
+        isAuthenticated() && 
+        request.auth.uid == userId && 
+        request.resource.data.role == resource.data.role
+      );
       
       // DELETE: Admin can delete user profiles
       allow delete: if isAdmin();
