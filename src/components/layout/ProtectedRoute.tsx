@@ -17,10 +17,13 @@ export function ProtectedRoute({ allowedRoles }: ProtectedRouteProps) {
         );
     }
 
-    if (!user || (user && !profile && !loading)) {
-        // If logged in via auth but no profile, effectively unauthorized for this app context
-        // or maybe redirect to a "finish setup" page. For now, login.
+    if (!user) {
         return <Navigate to="/login" replace />;
+    }
+
+    if (user && !profile && !loading) {
+        // If logged in via auth but no profile, send to setup
+        return <Navigate to="/setup" replace />;
     }
 
     if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {

@@ -42,20 +42,25 @@ export function DashboardLayout() {
                 </div>
 
                 <nav className="flex-1 px-4 space-y-1">
-                    <NavItem to="/" icon={Home} label="Início" />
+                    {/* Admin & Professional Home */}
+                    {profile.role !== 'client' && <NavItem to="/" icon={Home} label="Início" />}
 
-                    {(profile.role === 'admin' || profile.role === 'professional') && (
-                        <NavItem to="/clients" icon={Users} label="Clientes" />
-                    )}
-
+                    {/* Admin Menu */}
                     {profile.role === 'admin' && (
-                        <NavItem to="/users" icon={Users} label="Gestão de Usuários" />
+                        <>
+                            <NavItem to="/clients" icon={Users} label="Gestão de Clientes" />
+                            <NavItem to="/users" icon={CheckCircle} label="Gestão de Usuários" />
+                        </>
                     )}
 
+                    {/* Professional Menu */}
+                    {profile.role === 'professional' && (
+                        <NavItem to="/professional/clients" icon={Users} label="Meus Clientes" />
+                    )}
+
+                    {/* Client Menu */}
                     {profile.role === 'client' && (
-                        <>
-                            <NavItem to="/documents" icon={FileText} label="Meus Documentos" />
-                        </>
+                        <NavItem to="/client/home" icon={Home} label="Meu Painel" />
                     )}
                 </nav>
 

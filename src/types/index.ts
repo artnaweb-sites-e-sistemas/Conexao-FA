@@ -11,35 +11,64 @@ export interface UserProfile {
 
 export interface Client {
     id: string;
-    uid: string;
+    userId?: string; // Optional link to UserProfile
     name: string;
-    email: string; // Helper to display email
     assignedProfessionalIds: string[];
-    status: 'active' | 'inactive';
-    createdAt: string;
+    active: boolean; // Using boolean instead of status string as requested
+    createdAt: any; // Firestore Timestamp or string
+    updatedAt?: any;
 }
 
 export type DocumentStatus = 'pending' | 'approved' | 'rejected';
+
+export type UserRole = 'admin' | 'professional' | 'client';
 
 export interface DocumentFile {
     id: string;
     clientId: string;
     uploadedByUid: string;
+    uploadedByRole: UserRole;
     category: string;
-    note?: string;
-    filePath: string;
+    note: string;
     fileName: string;
     fileType: string;
     fileSize: number;
+    filePath: string;
+    downloadURL: string;
     status: DocumentStatus;
-    createdAt: string;
+    createdAt: any;
+    updatedAt: any;
+    // Denormalized permissions
+    clientUserId?: string | null;
+    assignedProfessionalIds?: string[];
+}
+
+export type TodoStatus = 'open' | 'resolved' | 'cancelled';
+
+export interface Todo {
+    id: string;
+    clientId: string;
+    title: string;
+    description?: string;
+    createdByUid: string;
+    createdByRole: UserRole;
+    assignedToRole: 'client' | 'professional';
+    status: TodoStatus;
+    createdAt: any;
+    updatedAt: any;
+    resolvedAt?: any;
+    // Denormalized permissions
+    clientUserId?: string | null;
+    assignedProfessionalIds?: string[];
 }
 
 export interface AuditLog {
     id: string;
-    actorUid: string;
     action: string;
-    entity: 'user' | 'client' | 'document';
-    entityId: string;
-    timestamp: string;
+    targetCollection: string;
+    targetId: string;
+    performedBy: string; // uid
+    performedByRole: UserRole;
+    details: any;
+    timestamp: any;
 }

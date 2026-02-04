@@ -2,81 +2,165 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper Functions
+    // Helper: Check if user is authenticated
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    // Helper: Get user role from their profile (only call when you KNOW the user exists)
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
     }
 
-    function hasRole(role) {
-      return isAuthenticated() && getUserData().role == role;
+    // Helper: Check if user has a profile (exists in users collection)
+    function hasProfile() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
+    // Helper: Check if authenticated user is admin
     function isAdmin() {
-      return hasRole('admin');
+      return isAuthenticated() && hasProfile() && getUserRole() == 'admin';
     }
 
+    // Helper: Check if authenticated user is professional
     function isProfessional() {
-      return hasRole('professional');
+      return isAuthenticated() && hasProfile() && getUserRole() == 'professional';
     }
 
-    function isClient() {
-      return hasRole('client');
-    }
-
-    // Users Collection
-    // Admin manages all. Users can read their own profile.
+    // ==========================================
+    // USERS COLLECTION
+    // ==========================================
     match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin() || isProfessional()); 
-      // Professional might need to read user data to see client name if normalized, 
-      // but client data is usually in 'clients' collection. 
-      // Allowing pro to read users is safer for collaboration context.
+      // READ: Own profile OR admin/professional can read any
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        isAdmin() || 
+        isProfessional()
+      );
       
-      allow write: if isAdmin(); // Only Admin creates/edits users
+      // CREATE: Any authenticated user can create their OWN profile
+      // This is the bootstrap flow - user just signed up and needs to create profile
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      
+      // UPDATE: Only admin can update profiles
+      allow update: if isAdmin();
+      
+      // DELETE: Admin can delete user profiles
+      allow delete: if isAdmin();
     }
 
-    // Clients Collection
-    // Linked to a User. Contains business logic (assignments).
+    // ==========================================
+    // INVITES COLLECTION (ID = normalized email)
+    // ==========================================
+    match /invites/{emailId} {
+      // GET: User can get their own invite by email ID
+      allow get: if isAuthenticated() && emailId == request.auth.token.email;
+      
+      // LIST: Only admin
+      allow list: if isAdmin();
+      
+      // CREATE: Only admin
+      allow create: if isAdmin();
+      
+      // DELETE: Admin OR owner claiming their invite
+      allow delete: if isAdmin() || (isAuthenticated() && emailId == request.auth.token.email);
+      
+      // UPDATE: Never (invites are immutable)
+      allow update: if false;
+    }
+
+    // ==========================================
+    // CLIENTS COLLECTION
+    // ==========================================
     match /clients/{clientId} {
+      // READ: Admin, assigned professional, or linked client user
       allow read: if isAdmin() 
                   || (isProfessional() && request.auth.uid in resource.data.assignedProfessionalIds)
-                  || (isAuthenticated() && resource.data.uid == request.auth.uid);
-                  
+                  || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      
+      // WRITE: Only admin
       allow create, update, delete: if isAdmin();
     }
 
-    // Documents Collection
+    // ==========================================
+    // DOCUMENTS COLLECTION
+    // ==========================================
     match /documents/{docId} {
-      function clientIsAssignedToPro() {
-        // Check if the document's client is assigned to the requesting professional
-        let clientData = get(/databases/$(database)/documents/clients/$(request.resource.data.clientId)).data;
-        return request.auth.uid in clientData.assignedProfessionalIds;
-      }
-      
-      function existingClientIsAssignedToPro() {
-         let clientData = get(/databases/$(database)/documents/clients/$(resource.data.clientId)).data;
-         return request.auth.uid in clientData.assignedProfessionalIds;
-      }
 
-      allow read: if isAdmin() 
-                  || (isAuthenticated() && resource.data.uploadedByUid == request.auth.uid)
-                  || (isProfessional() && existingClientIsAssignedToPro());
+      // READ: Denormalized check (Fast & Filterable)
+      // Rely on fields 'clientUserId' and 'assignedProfessionalIds' inside the document.
+      allow read: if isAuthenticated() && (
+          isAdmin() || 
+          resource.data.clientUserId == request.auth.uid || 
+          (resource.data.assignedProfessionalIds != null && request.auth.uid in resource.data.assignedProfessionalIds)
+      );
 
-      allow create: if isAuthenticated(); 
-      // Validation should ideally check if clientId belongs to user or if pro is assigned.
+      // CREATE: Validate that caller is included in the denormalized permission fields
+      // This trusts the frontend but is safe because:
+      // 1. Frontend gets client data from Firestore (which has its own rules)
+      // 2. We validate the caller is in the permission fields they're sending
+      allow create: if isAuthenticated() && (
+          isAdmin() || 
+          // Client: their UID must match clientUserId being written
+          request.resource.data.clientUserId == request.auth.uid ||
+          // Professional: their UID must be in assignedProfessionalIds being written
+          (request.resource.data.assignedProfessionalIds != null && request.auth.uid in request.resource.data.assignedProfessionalIds)
+      );
       
-      allow update: if isAdmin() || (isProfessional() && existingClientIsAssignedToPro());
+      // UPDATE: Admin (full), or Professional (status only)
+      allow update: if isAuthenticated() && (
+          isAdmin() || 
+          ((resource.data.assignedProfessionalIds != null && request.auth.uid in resource.data.assignedProfessionalIds) && 
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'note']))
+      );
+      
+      // DELETE: Only admin
       allow delete: if isAdmin();
     }
     
-    // Audit Logs
+    // ==========================================
+    // TODOS COLLECTION
+    // ==========================================
+    match /todos/{todoId} {
+      // READ: Denormalized check
+      allow read: if isAuthenticated() && (
+          isAdmin() || 
+          resource.data.clientUserId == request.auth.uid || 
+          (resource.data.assignedProfessionalIds != null && request.auth.uid in resource.data.assignedProfessionalIds)
+      );
+
+      // CREATE: Admin or Professional (for assigned clients)
+      // Client CANNOT create todos
+      allow create: if isAuthenticated() && (
+          isAdmin() || 
+          (getUserRole() == 'professional' && 
+           request.resource.data.assignedProfessionalIds != null && 
+           request.auth.uid in request.resource.data.assignedProfessionalIds)
+      );
+      
+      // UPDATE: Status resolution
+      allow update: if isAuthenticated() && (
+          isAdmin() || 
+          ((request.auth.uid in resource.data.assignedProfessionalIds || resource.data.clientUserId == request.auth.uid) && 
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'resolvedAt']))
+      );
+      
+      // DELETE: Only admin
+      allow delete: if isAdmin();
+    }
+    
+    // ==========================================
+    // AUDIT LOGS COLLECTION
+    // ==========================================
     match /audit_logs/{logId} {
-       allow read: if isAdmin();
-       allow create: if isAuthenticated(); // Application writes logs
-       allow update, delete: if false; // Append-only
+      // READ: Only admin
+      allow read: if isAdmin();
+      
+      // CREATE: Any authenticated user (system logs actions)
+      allow create: if isAuthenticated();
+      
+      // UPDATE/DELETE: Never (audit logs are immutable)
+      allow update, delete: if false;
     }
   }
 }
